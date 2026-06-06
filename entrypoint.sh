@@ -3,21 +3,29 @@
 # Hermes Agent — Container Entrypoint
 # =============================================================================
 # Responsibilities:
-#   1. Optionally drop privileges to HERMES_UID:HERMES_GID
-#   2. Seed /opt/data/.env  on first run (writes NVIDIA API key + any extras)
-#   3. Seed /opt/data/config.yaml on first run (NVIDIA provider + chosen model)
+#   1. Drop privileges to HERMES_UID:HERMES_GID
+#   2. Seed /opt/data/.env on first run (writes API keys for chosen provider)
+#   3. Seed /opt/data/config.yaml on first run (provider + model config)
 #   4. Exec the command passed as CMD (default: gateway run)
 #
-# Environment variables consumed (all set via .env / docker-compose.yml):
-#   NVIDIA_API_KEY      — required; your nvapi-... key from build.nvidia.com
-#   NVIDIA_MODEL        — model ref, default: meta/llama-3.1-70b-instruct
-#   HERMES_UID          — UID to run as inside the container   (default: 10000)
-#   HERMES_GID          — GID to run as inside the container   (default: 10000)
-#   HERMES_DASHBOARD    — set to 1 to enable the web dashboard (default: 0)
-#   HERMES_DASHBOARD_INSECURE — set to 1 to skip OAuth gate on dashboard
-#   API_SERVER_ENABLED  — set to true to expose the OpenAI-compat API server
-#   API_SERVER_HOST     — bind address for the API server (default: 0.0.0.0)
-#   API_SERVER_KEY      — auth key for the API server (min 8 chars)
+# Supported PROVIDER values:
+#   nvidia     NVIDIA NIM (default)
+#   openai     OpenAI API
+#   anthropic  Anthropic API
+#   openrouter OpenRouter
+#   gemini     Google Gemini
+#   ollama     Local Ollama instance
+#   lmstudio   Local LM Studio
+#   local      Local via llama.cpp
+#   custom     Custom OpenAI-compatible endpoint
+#
+# Environment variables:
+#   PROVIDER   model provider (default: nvidia)
+#   MODEL      model name (default depends on provider)
+#   NVIDIA_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY,
+#   GOOGLE_API_KEY, HF_TOKEN, CUSTOM_BASE_URL, CUSTOM_API_KEY
+#   OLLAMA_HOST Ollama host (default: http://host.docker.internal:11434)
+#   HERMES_UID HERMES_GID run-as IDs
 # =============================================================================
 
 set -euo pipefail
@@ -27,135 +35,227 @@ ENV_FILE="${DATA_DIR}/.env"
 CONFIG_FILE="${DATA_DIR}/config.yaml"
 FIRST_RUN_MARKER="${DATA_DIR}/.hermes_initialized"
 
-# ---------------------------------------------------------------------------
 # Defaults
-# ---------------------------------------------------------------------------
 HERMES_UID="${HERMES_UID:-10000}"
 HERMES_GID="${HERMES_GID:-10000}"
-NVIDIA_MODEL="${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}"
+PROVIDER="${PROVIDER:-nvidia}"
+MODEL="${MODEL:-}"
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# Model defaults per provider
+case "${PROVIDER}" in
+  nvidia)     DEFAULT_MODEL="meta/llama-3.1-70b-instruct" ;;
+  openai)     DEFAULT_MODEL="gpt-4o" ;;
+  anthropic)  DEFAULT_MODEL="claude-sonnet-4-20250514" ;;
+  openrouter) DEFAULT_MODEL="meta-llama/llama-3.1-70b-instruct" ;;
+  gemini)     DEFAULT_MODEL="gemini-2.0-flash" ;;
+  ollama)     DEFAULT_MODEL="llama3.1" ;;
+  lmstudio)   DEFAULT_MODEL="local-model" ;;
+  local)      DEFAULT_MODEL="local" ;;
+  custom)     DEFAULT_MODEL="gpt-4o" ;;
+  *)
+    echo "[entrypoint] Unknown provider '${PROVIDER}'. Supported: nvidia, openai, anthropic, openrouter, gemini, ollama, lmstudio, local, custom" >&2
+    exit 1
+    ;;
+esac
+MODEL="${MODEL:-${DEFAULT_MODEL}}"
+
 log()  { echo "[entrypoint] $*"; }
-warn() { echo "[entrypoint] ⚠  $*" >&2; }
-die()  { echo "[entrypoint] ✗  $*" >&2; exit 1; }
+die()  { echo "[entrypoint] ERROR: $*" >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
-# Validate required variables
-# ---------------------------------------------------------------------------
-if [[ -z "${NVIDIA_API_KEY:-}" ]]; then
-  die "NVIDIA_API_KEY is not set. Add it to your .env file and restart.
-  Get a free key at: https://build.nvidia.com/settings/api-keys"
+# Validate provider-specific API key
+REQUIRED_KEY=""
+case "${PROVIDER}" in
+  nvidia)     REQUIRED_KEY="NVIDIA_API_KEY" ;;
+  openai)     REQUIRED_KEY="OPENAI_API_KEY" ;;
+  anthropic)  REQUIRED_KEY="ANTHROPIC_API_KEY" ;;
+  openrouter) REQUIRED_KEY="OPENROUTER_API_KEY" ;;
+  gemini)     REQUIRED_KEY="GOOGLE_API_KEY" ;;
+  ollama|lmstudio|local|custom) REQUIRED_KEY="" ;;
+  *) die "Unknown provider '${PROVIDER}'. Supported: nvidia, openai, anthropic, openrouter, gemini, ollama, lmstudio, local, custom" ;;
+esac
+
+if [[ -n "${REQUIRED_KEY}" ]]; then
+  API_KEY="${!REQUIRED_KEY}"
+  if [[ -z "${API_KEY}" ]]; then
+    die "Required API key '${REQUIRED_KEY}' is not set. Set it in your .env file and restart."
+  fi
 fi
 
-# ---------------------------------------------------------------------------
-# Ensure the data directory is owned by the hermes user.
-# This handles the case where docker creates the volume as root.
-# ---------------------------------------------------------------------------
+# Ensure data directory ownership
 chown -R "${HERMES_UID}:${HERMES_GID}" "${DATA_DIR}" 2>/dev/null || true
 
-# ---------------------------------------------------------------------------
 # First-run initialisation
-# ---------------------------------------------------------------------------
 if [[ ! -f "${FIRST_RUN_MARKER}" ]]; then
   log "First run detected — seeding configuration into ${DATA_DIR}"
 
   # ---- .env ----------------------------------------------------------------
-  # Only write if it doesn't already exist (user may have placed their own).
   if [[ ! -f "${ENV_FILE}" ]]; then
     log "Writing ${ENV_FILE}"
-    cat > "${ENV_FILE}" <<EOF
-# =============================================================================
-# Hermes Agent — Runtime secrets
-# Generated by entrypoint.sh on first run. Safe to edit manually.
-# =============================================================================
 
-# NVIDIA NIM (https://build.nvidia.com)
-NVIDIA_API_KEY=${NVIDIA_API_KEY}
+    {
+      echo "# Hermes Agent — Runtime secrets"
+      echo "# Generated by entrypoint.sh. Safe to edit manually."
+      echo ""
+      echo "# Provider: ${PROVIDER}"
+      echo "# Model: ${MODEL}"
+      echo ""
 
-# Add any other provider keys below, e.g.:
-# OPENROUTER_API_KEY=
-# ANTHROPIC_API_KEY=
-# TELEGRAM_BOT_TOKEN=
-EOF
+      # Write available keys
+      [[ -n "${NVIDIA_API_KEY:-}" ]] && echo "NVIDIA_API_KEY=${NVIDIA_API_KEY}"
+      [[ -n "${OPENAI_API_KEY:-}" ]] && echo "OPENAI_API_KEY=${OPENAI_API_KEY}"
+      [[ -n "${ANTHROPIC_API_KEY:-}" ]] && echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
+      [[ -n "${OPENROUTER_API_KEY:-}" ]] && echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}"
+      [[ -n "${GOOGLE_API_KEY:-}" ]] && echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}"
+      [[ -n "${HF_TOKEN:-}" ]] && echo "HF_TOKEN=${HF_TOKEN}"
+      [[ -n "${CUSTOM_BASE_URL:-}" ]] && echo "CUSTOM_BASE_URL=${CUSTOM_BASE_URL}"
+      [[ -n "${CUSTOM_API_KEY:-}" ]] && echo "CUSTOM_API_KEY=${CUSTOM_API_KEY}"
+
+      # Fallback: if no keys found in env but we have a required key, write it
+      if [[ -z "${NVIDIA_API_KEY:-}${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENROUTER_API_KEY:-}${GOOGLE_API_KEY:-}${HF_TOKEN:-}${CUSTOM_BASE_URL:-}${CUSTOM_API_KEY:-}" ]] && [[ -n "${REQUIRED_KEY}" ]]; then
+        echo "${REQUIRED_KEY}=${!REQUIRED_KEY}"
+      fi
+    } > "${ENV_FILE}"
+
     chown "${HERMES_UID}:${HERMES_GID}" "${ENV_FILE}"
     chmod 600 "${ENV_FILE}"
     log ".env written (mode 600)"
   else
     log ".env already exists — skipping write"
-    # Still inject/update the NVIDIA key in case it changed in the host .env
-    if grep -q "^NVIDIA_API_KEY=" "${ENV_FILE}"; then
-      sed -i "s|^NVIDIA_API_KEY=.*|NVIDIA_API_KEY=${NVIDIA_API_KEY}|" "${ENV_FILE}"
-    else
-      echo "NVIDIA_API_KEY=${NVIDIA_API_KEY}" >> "${ENV_FILE}"
+    # Sync required key if it changed
+    if [[ -n "${REQUIRED_KEY}" ]] && grep -q "^${REQUIRED_KEY}=" "${ENV_FILE}" 2>/dev/null; then
+      sed -i "s|^${REQUIRED_KEY}=.*|${REQUIRED_KEY}=${!REQUIRED_KEY}|" "${ENV_FILE}"
     fi
   fi
 
   # ---- config.yaml ---------------------------------------------------------
   if [[ ! -f "${CONFIG_FILE}" ]]; then
     log "Writing ${CONFIG_FILE}"
-    cat > "${CONFIG_FILE}" <<EOF
-# =============================================================================
-# Hermes Agent — Configuration
-# Generated by entrypoint.sh on first run. Safe to edit manually.
-# Docs: https://hermes-agent.nousresearch.com/docs/user-guide/configuration
-# =============================================================================
 
-# ---------------------------------------------------------------------------
-# Primary model — NVIDIA NIM (OpenAI-compatible, free tier)
-# Change NVIDIA_MODEL in your .env to switch models without editing this file.
-# Full model list: https://build.nvidia.com/models
-# ---------------------------------------------------------------------------
-model:
-  provider: nvidia
-  default: "${NVIDIA_MODEL}"
-
-# ---------------------------------------------------------------------------
-# Named provider block for NVIDIA NIM.
-# api_key is read from the NVIDIA_API_KEY env var (written to .env above).
-# ---------------------------------------------------------------------------
+    # Build provider block
+    PROVIDER_BLOCK=""
+    case "${PROVIDER}" in
+      nvidia)
+        PROVIDER_BLOCK=$(cat <<'PROV'
 providers:
   nvidia:
     base_url: "https://integrate.api.nvidia.com/v1"
     key_env: NVIDIA_API_KEY
     type: openai
     timeout_seconds: 300
+PROV
+) ;;
+      openai)
+        PROVIDER_BLOCK=$(cat <<'PROV'
+providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    key_env: OPENAI_API_KEY
+    type: openai
+    timeout_seconds: 300
+PROV
+) ;;
+      anthropic)
+        PROVIDER_BLOCK=$(cat <<'PROV'
+providers:
+  anthropic:
+    base_url: "https://api.anthropic.com"
+    key_env: ANTHROPIC_API_KEY
+    type: anthropic
+    timeout_seconds: 300
+PROV
+) ;;
+      openrouter)
+        PROVIDER_BLOCK=$(cat <<'PROV'
+providers:
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    key_env: OPENROUTER_API_KEY
+    type: openai
+    timeout_seconds: 300
+PROV
+) ;;
+      gemini)
+        PROVIDER_BLOCK=$(cat <<'PROV'
+providers:
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    key_env: GOOGLE_API_KEY
+    type: openai
+    timeout_seconds: 300
+PROV
+) ;;
+      ollama)
+        _ollama_host="${OLLAMA_HOST:-http://host.docker.internal:11434}"
+        PROVIDER_BLOCK="providers:
+  ollama:
+    base_url: \"${_ollama_host}/v1\"
+    key_env: OLLAMA_API_KEY
+    type: openai
+    timeout_seconds: 600"
+        ;;
+      lmstudio)
+        PROVIDER_BLOCK="providers:
+  lmstudio:
+    base_url: \"http://localhost:1234/v1\"
+    key_env: LMSTUDIO_API_KEY
+    type: openai
+    timeout_seconds: 600"
+        ;;
+      local)
+        PROVIDER_BLOCK="providers:
+  local:
+    base_url: \"http://localhost:8000/v1\"
+    key_env: LOCAL_API_KEY
+    type: openai
+    timeout_seconds: 600"
+        ;;
+      custom)
+        _custom_url="${CUSTOM_BASE_URL:-http://localhost:8000/v1}"
+        PROVIDER_BLOCK="providers:
+  custom:
+    base_url: \"${_custom_url}\"
+    key_env: CUSTOM_API_KEY
+    type: openai
+    timeout_seconds: 300"
+        ;;
+    esac
 
-# ---------------------------------------------------------------------------
-# Terminal backend — local by default (safest inside a container).
-# Switch to "docker" if you want the agent to execute commands in an
-# isolated sandbox container (requires Docker-in-Docker or socket mount).
-# ---------------------------------------------------------------------------
+    # Write config.yaml
+    cat > "${CONFIG_FILE}" <<EOF
+# Hermes Agent — Configuration
+# Generated by entrypoint.sh. Safe to edit manually.
+# Docs: https://hermes-agent.nousresearch.com/docs/user-guide/configuration
+
+# Primary model — ${PROVIDER}
+model:
+  provider: ${PROVIDER}
+  default: "${MODEL}"
+
+# Provider block for ${PROVIDER}.
+${PROVIDER_BLOCK}
+
+# Terminal backend — local by default
 terminal:
   backend: local
 EOF
+
     chown "${HERMES_UID}:${HERMES_GID}" "${CONFIG_FILE}"
     log "config.yaml written"
   else
     log "config.yaml already exists — skipping write"
   fi
 
-  # Mark initialisation complete so we skip this block on subsequent starts.
+  # Mark initialisation complete
   touch "${FIRST_RUN_MARKER}"
   chown "${HERMES_UID}:${HERMES_GID}" "${FIRST_RUN_MARKER}"
-  log "Initialisation complete ✓"
+  log "Initialisation complete"
 else
   log "Data directory already initialised — skipping first-run setup"
-  # Always keep the API key in sync with whatever is in the host .env
-  if [[ -f "${ENV_FILE}" ]]; then
-    if grep -q "^NVIDIA_API_KEY=" "${ENV_FILE}"; then
-      sed -i "s|^NVIDIA_API_KEY=.*|NVIDIA_API_KEY=${NVIDIA_API_KEY}|" "${ENV_FILE}"
-    else
-      echo "NVIDIA_API_KEY=${NVIDIA_API_KEY}" >> "${ENV_FILE}"
-    fi
-  fi
 fi
 
-# ---------------------------------------------------------------------------
-# Drop privileges and exec the requested command
-# ---------------------------------------------------------------------------
+# Drop privileges and exec
 log "Starting as UID=${HERMES_UID} GID=${HERMES_GID}: hermes $*"
+log "Provider: ${PROVIDER}, Model: ${MODEL}"
 
 export HOME="/home/hermes"
 
