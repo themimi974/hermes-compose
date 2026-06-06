@@ -18,10 +18,9 @@ LABEL org.opencontainers.image.base.name="debian:trixie"
 # ---------------------------------------------------------------------------
 # System dependencies
 #
-# nodejs/npm are intentionally NOT installed here — we install Node.js 22 LTS
-# via the NodeSource script below. This avoids the signal-exit v3/v4 API
-# mismatch that occurs with Debian's older bundled node, and satisfies the
-# Hermes TUI's Node ^20.19 || >=22.12 requirement.
+# nodejs/npm are intentionally NOT installed here — we install Node.js 20 LTS
+# via the NodeSource script below to avoid the signal-exit v3/v4 API mismatch
+# caused by Debian's older bundled node.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y \
@@ -34,7 +33,6 @@ RUN apt-get update && apt-get upgrade -y && \
         ffmpeg \
         gcc \
         libffi-dev \
-        make \
         procps \
         openssh-client \
         tini \
@@ -45,11 +43,11 @@ RUN apt-get update && apt-get upgrade -y && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# Install Node.js 22 LTS from NodeSource
-# Debian Trixie ships Node 18 via apt; Node 22 is the current LTS and
-# satisfies the Hermes TUI's Node ^20.19 || >=22.12 requirement.
+# Install Node.js 20 LTS from NodeSource
+# Debian Trixie ships Node 18 via apt; Node 20 is required for the ESM
+# signal-exit v4 API that the Hermes TUI depends on.
 # ---------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
@@ -77,8 +75,8 @@ RUN groupadd -g 10000 hermes && \
 ENV HERMES_HOME=/opt/data
 
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
-        | bash -s -- --skip-setup --skip-browser || true && \
-    (hermes --tui --version 2>/dev/null || true) && \
+        | bash -s -- --skip-setup --skip-browser && \
+    hermes --tui --version && \
     chown -R hermes:hermes /usr/local/lib/hermes-agent
 
 # ---------------------------------------------------------------------------
