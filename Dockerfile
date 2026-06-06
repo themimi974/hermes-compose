@@ -103,4 +103,4 @@ EXPOSE 8642 9119
 # The entrypoint seeds config on first run then exec's the gateway.
 # ---------------------------------------------------------------------------
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
-CMD ["--tui"]
+CMD ["--cli"]
