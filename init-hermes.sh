@@ -61,6 +61,43 @@ else
     git clone https://github.com/themimi974/hermes-compose.git "${WRAPPER_DIR}"
 fi
 
+# =============================================================================
+# Sync local updates into the cloned wrapper
+# =============================================================================
+# After cloning/pulling, copy updated files from this script's directory (or
+# HERMES_COMPOSE_SYNC_DIR) into the wrapper so the build uses the latest code.
+# This is critical when the init script has been modified but the GitHub repo
+# still has an older version.
+sync_wrapper_from() {
+    local src_dir="$1"
+    if [[ ! -d "${src_dir}" ]]; then
+        warn "Sync source not found: ${src_dir} — skipping"
+        return 0
+    fi
+    info "Syncing updates from ${src_dir} into ${WRAPPER_DIR}"
+    for f in entrypoint.sh docker-compose.yml .env.example Dockerfile; do
+        if [[ -f "${src_dir}/${f}" ]]; then
+            if diff -q "${src_dir}/${f}" "${WRAPPER_DIR}/${f}" &>/dev/null; then
+                info "  ${f} — up to date"
+            else
+                cp -f "${src_dir}/${f}" "${WRAPPER_DIR}/${f}"
+                ok "  ${f} — updated"
+            fi
+        fi
+    done
+}
+
+# Priority: HERMES_COMPOSE_SYNC_DIR > script's own directory
+if [[ -n "${HERMES_COMPOSE_SYNC_DIR:-}" ]] && [[ -d "${HERMES_COMPOSE_SYNC_DIR}" ]]; then
+    sync_wrapper_from "${HERMES_COMPOSE_SYNC_DIR}"
+elif [[ -d "${SCRIPT_DIR}" ]]; then
+    # If init-hermes.sh has been modified, its dir may contain updated files
+    # only sync if the script itself was modified vs the clone
+    if [[ -f "${SCRIPT_DIR}/init-hermes.sh" ]] && ! diff -q "${SCRIPT_DIR}/init-hermes.sh" "${WRAPPER_DIR}/init-hermes.sh" &>/dev/null; then
+        sync_wrapper_from "${SCRIPT_DIR}"
+    fi
+fi
+
 # Ensure data directory exists
 if [[ ! -d "${DATA_DIR}" ]]; then
     mkdir -p "${DATA_DIR}"
