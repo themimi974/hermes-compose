@@ -3,10 +3,9 @@
 # Hermes Agent — Docker Compose
 # =============================================================================
 # Usage:
-#   export NVIDIA_API_KEY=***          # or set in .env
-#   init-hermes                        # first run: builds image + seeds config
-#   # or from this directory:
-#   docker compose run --rm hermes
+#   PROVIDER=ollama MODEL=llama3.1 init-hermes
+#   PROVIDER=openai OPENAI_API_KEY=sk-... init-hermes
+#   PROVIDER=nvidia NVIDIA_API_KEY=nvapi-... init-hermes
 # =============================================================================
 
 services:
@@ -21,23 +20,64 @@ services:
     working_dir: /workspace
 
     # -------------------------------------------------------------------------
-    # Environment — pass API key directly (no .env file needed)
+    # Environment — pass provider + all API keys
     # -------------------------------------------------------------------------
     environment:
       HERMES_HOME: /opt/data
       working_dir: /workspace
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
-      NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
+
+      # Provider selection
+      PROVIDER: ${PROVIDER:-nvidia}
+      MODEL: ${MODEL:-}
+
+      # Dashboard
       HERMES_DASHBOARD: ${HERMES_DASHBOARD:-0}
+      HERMES_DASHBOARD_INSECURE: ${HERMES_DASHBOARD_INSECURE:-0}
+
+      # API server (OpenAI-compatible)
+      API_SERVER_ENABLED: ${API_SERVER_ENABLED:-false}
+      API_SERVER_HOST: ${API_SERVER_HOST:-0.0.0.0}
+      API_SERVER_KEY: ${API_SERVER_KEY:-}
+      API_SERVER_CORS_ORIGINS: ${API_SERVER_CORS_ORIGINS:-*}
+
+      # Provider API keys (all forwarded into the container)
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      HF_TOKEN: ${HF_TOKEN}
+      CUSTOM_BASE_URL: ${CUSTOM_BASE_URL}
+      CUSTOM_API_KEY: ${CUSTOM_API_KEY}
+
+      # Ollama host
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
 
     # -------------------------------------------------------------------------
     # Persistent volumes
-    #   ../.hermes  → /opt/data    hermes state: config, sessions, memories (sibling)
-    #   ../         → /workspace   parent project directory (your codebase)
+    #   ../.hermes  → /opt/data    hermes state: config, sessions, memories
+    #   ../         → /workspace   parent project directory
     # -------------------------------------------------------------------------
     volumes:
       - ../.hermes:/opt/data:rw,z
       - ../:/workspace:z
 
+    # -------------------------------------------------------------------------
+    # Network
+    # -------------------------------------------------------------------------
     network_mode: bridge
     restart: "no"
+
+    # -------------------------------------------------------------------------
+    # Shared memory — some model inference backends benefit from larger /dev/shm
+    # -------------------------------------------------------------------------
+    shm_size: "256m"
+
+    # -------------------------------------------------------------------------
+    # Logging
+    # -------------------------------------------------------------------------
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
