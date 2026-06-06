@@ -69,9 +69,37 @@ if [[ ! -d "${DATA_DIR}" ]]; then
     ok "Created data directory: ${DATA_DIR}"
 fi
 
-# --- Validate API key ---
+# --- Validate or configure API key ---
 if [[ -z "${NVIDIA_API_KEY:-}" ]]; then
-    err "NVIDIA_API_KEY is not set. Set it in your environment or .env file.\n  Get a free key at: https://build.nvidia.com/settings/api-keys"
+    warn "NVIDIA_API_KEY is not set."
+    if [[ -t 0 ]]; then
+        read -p "Would you like to configure your model/API key now? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            info "Launching Hermes model configuration..."
+            # We're already in $SCRIPT_DIR which is .hermes-compose/
+            # Run hermes model (which will ask for API key interactively)
+            # or guide the user to set it
+            if command -v hermes &>/dev/null; then
+                # If Hermes is installed on host, use it to configure
+                hermes model || warn "Model configuration exited with errors"
+            else
+                # No Hermes on host — create a .env placeholder and let entrypoint handle it
+                info "No 'hermes' CLI on host. Creating .env with placeholder."
+                info "You'll be prompted for the key on first run."
+            fi
+            # After configuration, try to read the key from .env
+            if [[ -f "${DATA_DIR}/.env" ]] && grep -q "^NVIDIA_API_KEY=" "${DATA_DIR}/.env" 2>/dev/null; then
+                NVIDIA_API_KEY=$(grep "^NVIDIA_API_KEY=" "${DATA_DIR}/.env" | cut -d= -f2-)
+                info "Found NVIDIA_API_KEY in .env"
+            fi
+        else
+            info "Skipping configuration. Exiting."
+            exit 0
+        fi
+    else
+        err "NVIDIA_API_KEY is not set (and stdin is not a TTY).\n  Set it in your environment or .env file.\n  Get a free key at: https://build.nvidia.com/settings/api-keys"
+    fi
 fi
 
 # --- SSH key setup (optional) ---
