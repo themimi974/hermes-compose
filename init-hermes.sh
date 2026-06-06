@@ -326,4 +326,7 @@ info "Workspace: ${PROJECT_DIR}"
 info "Provider: ${PROVIDER}"
 info "Model: ${MODEL}"
 
+# Export PROVIDER and MODEL so docker-compose picks them up
+export PROVIDER MODEL
+
 exec $ENGINE compose run --rm hermes
