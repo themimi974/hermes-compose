@@ -76,15 +76,8 @@ ENV HERMES_HOME=/opt/data
 
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
         | bash -s -- --skip-setup --skip-browser && \
-    chown -R hermes:hermes /usr/local/lib/hermes-agent && \
-    # Pre-install TUI deps and build as root → sets up node_modules + dist/entry.js
-    cd /usr/local/lib/hermes-agent/ui-tui && \
-    npm ci --silent --no-fund --no-audit --progress=false && \
-    npm run build --silent && \
-    # Remove package-lock.json so the TUI uses the prebuilt dist/entry.js
-    # path at runtime (bypasses the _tui_need_npm_install check entirely).
-    # The prebuilt bundle is self-contained — no runtime npm needed.
-    rm -f package-lock.json
+    hermes --tui --version && \
+    chown -R hermes:hermes /usr/local/lib/hermes-agent
 
 # ---------------------------------------------------------------------------
 # Runtime data directory (the persistent volume mount point)
@@ -110,4 +103,4 @@ EXPOSE 8642 9119
 # The entrypoint seeds config on first run then exec's the gateway.
 # ---------------------------------------------------------------------------
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
-CMD ["gateway", "run"]
+CMD ["--tui"]
