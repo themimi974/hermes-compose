@@ -1,0 +1,43 @@
+---
+# =============================================================================
+# Hermes Agent — Docker Compose
+# =============================================================================
+# Usage:
+#   export NVIDIA_API_KEY=***          # or set in .env
+#   init-hermes                        # first run: builds image + seeds config
+#   # or from this directory:
+#   docker compose run --rm hermes
+# =============================================================================
+
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hermes
+    stdin_open: true
+    tty: true
+
+    working_dir: /workspace
+
+    # -------------------------------------------------------------------------
+    # Environment — pass API key directly (no .env file needed)
+    # -------------------------------------------------------------------------
+    environment:
+      HERMES_HOME: /opt/data
+      working_dir: /workspace
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-meta/llama-3.1-70b-instruct}
+      HERMES_DASHBOARD: ${HERMES_DASHBOARD:-0}
+
+    # -------------------------------------------------------------------------
+    # Persistent volumes
+    #   ../.hermes  → /opt/data    hermes state: config, sessions, memories (sibling)
+    #   ../         → /workspace   parent project directory (your codebase)
+    # -------------------------------------------------------------------------
+    volumes:
+      - ../.hermes:/opt/data:rw,z
+      - ../:/workspace:z
+
+    network_mode: bridge
+    restart: "no"
