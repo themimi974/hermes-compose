@@ -13,6 +13,30 @@
 
 set -euo pipefail
 
+# =============================================================================
+# Auto-update: pull latest init-hermes.sh from GitHub before running
+# This ensures the local copy is always up-to-date, even if it's old.
+# =============================================================================
+SELF_REPO="https://github.com/themimi974/hermes-compose"
+SELF_BRANCH="main"
+
+# Download latest init-hermes.sh from GitHub and replace self if newer
+update_self() {
+    local tmp_self
+    tmp_self=$(mktemp /tmp/hermes-init-XXXXXX.sh)
+    if curl -fsSL "${SELF_REPO}/raw/${SELF_BRANCH}/init-hermes.sh" -o "$tmp_self" 2>/dev/null; then
+        if ! diff -q "$tmp_self" "${BASH_SOURCE[0]}" &>/dev/null; then
+            info "Updating init-hermes.sh from GitHub (${SELF_BRANCH})"
+            cp "$tmp_self" "${BASH_SOURCE[0]}"
+            chmod +x "${BASH_SOURCE[0]}"
+            info "Re-executing with updated script..."
+            exec "${BASH_SOURCE[0]}" "$@"
+        fi
+    fi
+    rm -f "$tmp_self"
+}
+update_self
+
 # Colors
 ok()   { echo -e "\033[32m✔\033[0m $*"; }
 info() { echo -e "\033[34mℹ\033[0m $*"; }
