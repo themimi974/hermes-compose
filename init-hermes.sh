@@ -63,13 +63,14 @@ fi
 ENV_SRC="${PROJECT_DIR}/.env"
 ENV_DEST="${DATA_DIR}/.env"
 
+# 1. Ensure directory exists
 mkdir -p "${DATA_DIR}"
 
-# Fix ownership if the directory was created by Docker (different UID/GID)
-if [[ ! -w "${DATA_DIR}" ]]; then
-    warn "Cannot write to ${DATA_DIR} — fixing ownership with sudo..."
+# 2. Fix/reclaim ownership proactively so host user operations never fail
+if [[ -d "${DATA_DIR}" ]]; then
+    info "Syncing host permissions for ${DATA_DIR}..."
     sudo chown -R "$(id -u):$(id -g)" "${DATA_DIR}" \
-        || err "Could not fix permissions on ${DATA_DIR}. Run: sudo chown -R $(id -u):$(id -g) ${DATA_DIR}"
+        || err "Could not fix permissions on ${DATA_DIR}."
 fi
 
 if [[ -f "${ENV_SRC}" ]]; then
