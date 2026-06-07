@@ -58,20 +58,13 @@ else
 fi
 
 # =============================================================================
-# .env setup
+# .env setup (Sudo-free: directly using the user-owned wrapper directory)
 # =============================================================================
 ENV_SRC="${PROJECT_DIR}/.env"
-ENV_DEST="${DATA_DIR}/.env"
+ENV_DEST="${WRAPPER_DIR}/.env"
 
-# 1. Ensure directory exists
+# Ensure the data directory exists before Docker runs so it inherits user ownership
 mkdir -p "${DATA_DIR}"
-
-# 2. Fix/reclaim ownership proactively so host user operations never fail
-if [[ -d "${DATA_DIR}" ]]; then
-    info "Syncing host permissions for ${DATA_DIR}..."
-    sudo chown -R "$(id -u):$(id -g)" "${DATA_DIR}" \
-        || err "Could not fix permissions on ${DATA_DIR}."
-fi
 
 if [[ -f "${ENV_SRC}" ]]; then
     # .env found in current directory — use it
