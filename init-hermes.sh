@@ -4,38 +4,13 @@
 # =============================================================================
 # Usage:
 #   cd ~/my-project
-#   PROVIDER=ollama MODEL=llama3.1 init-hermes
-#   PROVIDER=openrouter MODEL=openai/gpt-4o init-hermes
-#   PROVIDER=nvidia MODEL=meta/llama-3.1-70b-instruct NVIDIA_API_KEY=nvapi-... init-hermes
-#   # or interactive:
-#   init-hermes   # prompts for provider choice
+#   ./init-hermes.sh
+#
+#   Or with env vars:
+#   PROVIDER=anthropic MODEL=claude-sonnet-4-20250514 ANTHROPIC_API_KEY=sk-... ./init-hermes.sh
 # =============================================================================
 
 set -euo pipefail
-
-# =============================================================================
-# Auto-update: pull latest init-hermes.sh from GitHub before running
-# This ensures the local copy is always up-to-date, even if it's old.
-# =============================================================================
-SELF_REPO="https://github.com/themimi974/hermes-compose"
-SELF_BRANCH="main"
-
-# Download latest init-hermes.sh from GitHub and replace self if newer
-update_self() {
-    local tmp_self
-    tmp_self=$(mktemp /tmp/hermes-init-XXXXXX.sh)
-    if curl -fsSL "${SELF_REPO}/raw/${SELF_BRANCH}/init-hermes.sh" -o "$tmp_self" 2>/dev/null; then
-        if ! diff -q "$tmp_self" "${BASH_SOURCE[0]}" &>/dev/null; then
-            info "Updating init-hermes.sh from GitHub (${SELF_BRANCH})"
-            cp "$tmp_self" "${BASH_SOURCE[0]}"
-            chmod +x "${BASH_SOURCE[0]}"
-            info "Re-executing with updated script..."
-            exec "${BASH_SOURCE[0]}" "$@"
-        fi
-    fi
-    rm -f "$tmp_self"
-}
-update_self
 
 # Colors
 ok()   { echo -e "\033[32m✔\033[0m $*"; }
@@ -43,16 +18,9 @@ info() { echo -e "\033[34mℹ\033[0m $*"; }
 warn() { echo -e "\033[33m⚠\033[0m $*"; }
 err()  { echo -e "\033[31m✘\033[0m $*" >&2; exit 1; }
 
-# Symlink resolution
-SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do
-    DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
-    SOURCE="$(readlink "$SOURCE")"
-    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
-done
-SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
-
+# =============================================================================
 # Detect container runtime
+# =============================================================================
 ENGINE=docker
 if command -v podman &>/dev/null; then
     ENGINE=podman
@@ -62,295 +30,101 @@ else
     err "No container runtime found (need docker or podman)"
 fi
 
+# =============================================================================
 # Resolve paths
+# =============================================================================
 PROJECT_DIR="$(pwd)"
 WRAPPER_DIR="${PROJECT_DIR}/.hermes-compose"
 DATA_DIR="${PROJECT_DIR}/.hermes"
-COMPOSE_FILE="${WRAPPER_DIR}/docker-compose.yml"
 
-# Dynamic container name
 PROJECT_NAME="${PWD##*/}"
 CONTAINER_NAME="hermes-${PROJECT_NAME//-/_}"
 
-# Clone or pull wrapper
+# =============================================================================
+# Clone or update wrapper repo
+# =============================================================================
 if [[ -d "${WRAPPER_DIR}/.git" ]]; then
-    info "Wrapper already exists at ${WRAPPER_DIR} — pulling updates"
+    info "Pulling latest hermes-compose..."
     cd "${WRAPPER_DIR}"
     ${ENGINE} compose down 2>/dev/null || true
-    git pull || warn "Pull failed, continuing with existing"
-elif [[ -d "${WRAPPER_DIR}" ]]; then
-    info "Wrapper directory exists without git — using existing"
+    git pull || warn "Pull failed, continuing with existing version"
+    cd "${PROJECT_DIR}"
 else
-    info "Cloning hermes-compose to ${WRAPPER_DIR}"
+    info "Cloning hermes-compose..."
     git clone https://github.com/themimi974/hermes-compose.git "${WRAPPER_DIR}"
 fi
 
 # =============================================================================
-# Sync local updates into the cloned wrapper
+# .env setup
 # =============================================================================
-# After cloning/pulling, copy updated files from this script's directory (or
-# HERMES_COMPOSE_SYNC_DIR) into the wrapper so the build uses the latest code.
-# This is critical when the init script has been modified but the GitHub repo
-# still has an older version.
-sync_wrapper_from() {
-    local src_dir="$1"
-    if [[ ! -d "${src_dir}" ]]; then
-        warn "Sync source not found: ${src_dir} — skipping"
-        return 0
-    fi
-    info "Syncing updates from ${src_dir} into ${WRAPPER_DIR}"
-    for f in entrypoint.sh docker-compose.yml .env.example Dockerfile; do
-        if [[ -f "${src_dir}/${f}" ]]; then
-            if diff -q "${src_dir}/${f}" "${WRAPPER_DIR}/${f}" &>/dev/null; then
-                info "  ${f} — up to date"
-            else
-                cp -f "${src_dir}/${f}" "${WRAPPER_DIR}/${f}"
-                ok "  ${f} — updated"
-            fi
-        fi
-    done
-}
+ENV_SRC="${PROJECT_DIR}/.env"
+ENV_DEST="${DATA_DIR}/.env"
 
-# Priority: HERMES_COMPOSE_SYNC_DIR > script's own directory
-if [[ -n "${HERMES_COMPOSE_SYNC_DIR:-}" ]] && [[ -d "${HERMES_COMPOSE_SYNC_DIR}" ]]; then
-    sync_wrapper_from "${HERMES_COMPOSE_SYNC_DIR}"
-elif [[ -d "${SCRIPT_DIR}" ]]; then
-    # If init-hermes.sh has been modified, its dir may contain updated files
-    # only sync if the script itself was modified vs the clone
-    if [[ -f "${SCRIPT_DIR}/init-hermes.sh" ]] && ! diff -q "${SCRIPT_DIR}/init-hermes.sh" "${WRAPPER_DIR}/init-hermes.sh" &>/dev/null; then
-        sync_wrapper_from "${SCRIPT_DIR}"
-    fi
-fi
+mkdir -p "${DATA_DIR}"
 
-# Ensure data directory exists
-if [[ ! -d "${DATA_DIR}" ]]; then
-    mkdir -p "${DATA_DIR}"
-    ok "Created data directory: ${DATA_DIR}"
-fi
+if [[ -f "${ENV_SRC}" ]]; then
+    # .env found next to where the script was run — use it
+    info "Found .env in current directory — copying to ${ENV_DEST}"
+    cp -f "${ENV_SRC}" "${ENV_DEST}"
 
-# =============================================================================
-# Provider selection
-# =============================================================================
-SUPPORTED_PROVIDERS="nvidia openai anthropic openrouter gemini ollama lmstudio local custom"
+elif [[ -n "${OPENAI_API_KEY:-}${ANTHROPIC_API_KEY:-}${NVIDIA_API_KEY:-}${OPENROUTER_API_KEY:-}${GOOGLE_API_KEY:-}${OLLAMA_HOST:-}${CUSTOM_BASE_URL:-}" ]]; then
+    # Keys already exported in the shell — write them out
+    info "Detected exported env vars — writing to ${ENV_DEST}"
+    {
+        [[ -n "${PROVIDER:-}" ]]           && echo "PROVIDER=${PROVIDER}"
+        [[ -n "${MODEL:-}" ]]              && echo "MODEL=${MODEL}"
+        [[ -n "${OPENAI_API_KEY:-}" ]]     && echo "OPENAI_API_KEY=${OPENAI_API_KEY}"
+        [[ -n "${ANTHROPIC_API_KEY:-}" ]]  && echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
+        [[ -n "${NVIDIA_API_KEY:-}" ]]     && echo "NVIDIA_API_KEY=${NVIDIA_API_KEY}"
+        [[ -n "${OPENROUTER_API_KEY:-}" ]] && echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}"
+        [[ -n "${GOOGLE_API_KEY:-}" ]]     && echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}"
+        [[ -n "${OLLAMA_HOST:-}" ]]        && echo "OLLAMA_HOST=${OLLAMA_HOST}"
+        [[ -n "${CUSTOM_BASE_URL:-}" ]]    && echo "CUSTOM_BASE_URL=${CUSTOM_BASE_URL}"
+        [[ -n "${CUSTOM_API_KEY:-}" ]]     && echo "CUSTOM_API_KEY=${CUSTOM_API_KEY}"
+        [[ -n "${HF_TOKEN:-}" ]]           && echo "HF_TOKEN=${HF_TOKEN}"
+    } > "${ENV_DEST}"
+    ok "Wrote ${ENV_DEST}"
 
-# If PROVIDER is already set, just validate it
-if [[ -n "${PROVIDER:-}" ]]; then
-    if ! echo "${SUPPORTED_PROVIDERS}" | grep -qw "${PROVIDER}"; then
-        err "Unsupported provider '${PROVIDER}'. Supported: ${SUPPORTED_PROVIDERS}"
-    fi
 else
-    PROVIDER=""
-fi
+    # Nothing found — open nano so the user can create a .env right here
+    warn "No .env found and no env vars exported."
+    info "Opening nano — fill in your keys, save with Ctrl+O then exit with Ctrl+X."
+    nano "${ENV_SRC}"
 
-# Interactive provider selection if not set
-if [[ -z "${PROVIDER}" ]] && [[ -t 0 ]]; then
-    echo ""
-    info "=== Hermes Agent Provider Setup ==="
-    echo ""
-    echo "  1) nvidia     - NVIDIA NIM (cloud, free tier available)"
-    echo "  2) openai     - OpenAI API (paid)"
-    echo "  3) anthropic  - Anthropic API (paid)"
-    echo "  4) openrouter - OpenRouter (multi-provider, paid)"
-    echo "  5) gemini     - Google Gemini (free tier available)"
-    echo "  6) ollama     - Local Ollama instance"
-    echo "  7) lmstudio   - Local LM Studio"
-    echo "  8) local      - Local via llama.cpp"
-    echo "  9) custom     - Custom OpenAI-compatible endpoint"
-    echo ""
-    read -p "Choose provider (1-9 or name): " provider_input
-
-    case "${provider_input}" in
-        1) PROVIDER="nvidia" ;;
-        2) PROVIDER="openai" ;;
-        3) PROVIDER="anthropic" ;;
-        4) PROVIDER="openrouter" ;;
-        5) PROVIDER="gemini" ;;
-        6) PROVIDER="ollama" ;;
-        7) PROVIDER="lmstudio" ;;
-        8) PROVIDER="local" ;;
-        9) PROVIDER="custom" ;;
-        nvidia|openai|anthropic|openrouter|gemini|ollama|lmstudio|local|custom)
-            PROVIDER="${provider_input}" ;;
-        *)
-            err "Invalid choice. Supported: ${SUPPORTED_PROVIDERS}" ;;
-    esac
-fi
-
-if [[ -z "${PROVIDER}" ]]; then
-    err "No provider selected. Set PROVIDER env var or run interactively."
-fi
-
-info "Using provider: ${PROVIDER}"
-
-# =============================================================================
-# Model selection
-# =============================================================================
-if [[ -z "${MODEL:-}" ]]; then
-    # Set default based on provider
-    case "${PROVIDER}" in
-        nvidia)     MODEL="meta/llama-3.1-70b-instruct" ;;
-        openai)     MODEL="gpt-4o" ;;
-        anthropic)  MODEL="claude-sonnet-4-20250514" ;;
-        openrouter) MODEL="meta-llama/llama-3.1-70b-instruct" ;;
-        gemini)     MODEL="gemini-2.0-flash" ;;
-        ollama)     MODEL="llama3.1" ;;
-        lmstudio)   MODEL="local-model" ;;
-        local)      MODEL="local" ;;
-        custom)     MODEL="gpt-4o" ;;
-    esac
-
-    if [[ -t 0 ]]; then
-        read -p "Model name [${MODEL}]: " model_input
-        [[ -n "${model_input}" ]] && MODEL="${model_input}"
-    fi
-fi
-
-info "Using model: ${MODEL}"
-
-# =============================================================================
-# API key setup
-# =============================================================================
-# Required keys per provider
-REQUIRED_KEYS=""
-case "${PROVIDER}" in
-    nvidia)     REQUIRED_KEYS="NVIDIA_API_KEY" ;;
-    openai)     REQUIRED_KEYS="OPENAI_API_KEY" ;;
-    anthropic)  REQUIRED_KEYS="ANTHROPIC_API_KEY" ;;
-    openrouter) REQUIRED_KEYS="OPENROUTER_API_KEY" ;;
-    gemini)     REQUIRED_KEYS="GOOGLE_API_KEY" ;;
-    ollama|lmstudio|local|custom)
-        REQUIRED_KEYS="" ;;
-esac
-
-# Check if required keys are set
-if [[ -n "${REQUIRED_KEYS}" ]]; then
-    for key in ${REQUIRED_KEYS}; do
-        if [[ -z "${!key:-}" ]]; then
-            info "${key} is not set."
-            if [[ -t 0 ]]; then
-                # Check if .env has it
-                if [[ -f "${DATA_DIR}/.env" ]] && grep -q "^${key}=" "${DATA_DIR}/.env" 2>/dev/null; then
-                    info "Found ${key} in .env file"
-                else
-                    read -p "Enter ${key} (or leave empty to skip): " key_value
-                    if [[ -n "${key_value}" ]]; then
-                        export "${key}=${key_value}"
-                    fi
-                fi
-            fi
-        fi
-    done
-fi
-
-# Ollama-specific host setup
-if [[ "${PROVIDER}" == "ollama" ]] && [[ -z "${OLLAMA_HOST:-}" ]]; then
-    if [[ -t 0 ]]; then
-        read -p "Ollama host [http://host.docker.internal:11434]: " ollama_host
-        [[ -n "${ollama_host}" ]] && export OLLAMA_HOST="${ollama_host}"
+    if [[ -f "${ENV_SRC}" ]]; then
+        cp -f "${ENV_SRC}" "${ENV_DEST}"
+        ok ".env saved and copied to ${ENV_DEST}"
     else
-        export OLLAMA_HOST="http://host.docker.internal:11434"
+        err "No .env was created. Aborting."
     fi
 fi
 
-# Custom endpoint setup
-if [[ "${PROVIDER}" == "custom" ]]; then
-    if [[ -z "${CUSTOM_BASE_URL:-}" ]]; then
-        if [[ -t 0 ]]; then
-            read -p "Custom API base URL [http://localhost:8000/v1]: " custom_url
-            [[ -n "${custom_url}" ]] && export CUSTOM_BASE_URL="${custom_url}"
-        else
-            export CUSTOM_BASE_URL="http://localhost:8000/v1"
-        fi
-    fi
-fi
+# Load .env so PROVIDER and MODEL are available for docker-compose
+set -o allexport
+source "${ENV_DEST}"
+set +o allexport
 
 # =============================================================================
-# SSH key setup (optional)
-# =============================================================================
-SSH_VOLUME=""
-if [[ -n "${HERMES_SSH:-}" ]]; then
-    if [[ "${HERMES_SSH}" == "none" ]]; then
-        SSH_VOLUME=""
-    elif [[ -d "${HERMES_SSH}" ]]; then
-        SSH_VOLUME="${HERMES_SSH}:/root/.ssh:ro,z"
-    elif [[ -f "${HERMES_SSH}" ]]; then
-        SSH_VOLUME="${HERMES_SSH}:/root/.ssh/id_rsa:ro,z"
-        SSH_VOLUME="${SSH_VOLUME},/root/.ssh:/root/.ssh:rw"
-    fi
-
-    if [[ -n "${SSH_VOLUME}" ]]; then
-        info "Injecting SSH volume: ${SSH_VOLUME}"
-        if grep -q "^      - ../.hermes:/opt/data:rw,z" "$COMPOSE_FILE"; then
-            sed -i "/^      - \.\.\/\.hermes:\/opt\/data:rw,z/a\\      - ${SSH_VOLUME}" "$COMPOSE_FILE"
-        fi
-    fi
-fi
-
-# =============================================================================
-# Ensure .env exists with correct provider keys
-# =============================================================================
-if [[ ! -f "${DATA_DIR}/.env" ]]; then
-    if [[ -f "${WRAPPER_DIR}/.env.example" ]]; then
-        cp "${WRAPPER_DIR}/.env.example" "${DATA_DIR}/.env"
-    fi
-    info "Created .env from template"
-else
-    info ".env already exists — using existing"
-fi
-
-# Write provider-specific keys to .env
-{
-    # Write required keys
-    if [[ -n "${NVIDIA_API_KEY:-}" ]]; then
-        sed -i "s|^NVIDIA_API_KEY=.*|NVIDIA_API_KEY=${NVIDIA_API_KEY}|" "${DATA_DIR}/.env" 2>/dev/null || echo "NVIDIA_API_KEY=${NVIDIA_API_KEY}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        sed -i "s|^OPENAI_API_KEY=.*|OPENAI_API_KEY=${OPENAI_API_KEY}|" "${DATA_DIR}/.env" 2>/dev/null || echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}|" "${DATA_DIR}/.env" 2>/dev/null || echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
-        sed -i "s|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=${OPENROUTER_API_KEY}|" "${DATA_DIR}/.env" 2>/dev/null || echo "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${GOOGLE_API_KEY:-}" ]]; then
-        sed -i "s|^GOOGLE_API_KEY=.*|GOOGLE_API_KEY=${GOOGLE_API_KEY}|" "${DATA_DIR}/.env" 2>/dev/null || echo "GOOGLE_API_KEY=${GOOGLE_API_KEY}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${HF_TOKEN:-}" ]]; then
-        sed -i "s|^HF_TOKEN=.*|HF_TOKEN=${HF_TOKEN}|" "${DATA_DIR}/.env" 2>/dev/null || echo "HF_TOKEN=${HF_TOKEN}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${CUSTOM_BASE_URL:-}" ]]; then
-        sed -i "s|^CUSTOM_BASE_URL=.*|CUSTOM_BASE_URL=${CUSTOM_BASE_URL}|" "${DATA_DIR}/.env" 2>/dev/null || echo "CUSTOM_BASE_URL=${CUSTOM_BASE_URL}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${CUSTOM_API_KEY:-}" ]]; then
-        sed -i "s|^CUSTOM_API_KEY=.*|CUSTOM_API_KEY=${CUSTOM_API_KEY}|" "${DATA_DIR}/.env" 2>/dev/null || echo "CUSTOM_API_KEY=${CUSTOM_API_KEY}" >> "${DATA_DIR}/.env"
-    fi
-    if [[ -n "${OLLAMA_HOST:-}" ]]; then
-        sed -i "s|^OLLAMA_HOST=.*|OLLAMA_HOST=${OLLAMA_HOST}|" "${DATA_DIR}/.env" 2>/dev/null || echo "OLLAMA_HOST=${OLLAMA_HOST}" >> "${DATA_DIR}/.env"
-    fi
-} 2>/dev/null || true
-
-# =============================================================================
-# Build Docker image if missing
+# Build image
 # =============================================================================
 info "Building Docker image..."
 cd "${WRAPPER_DIR}"
 ${ENGINE} compose build
 
-# Cleanup old container
-${ENGINE} rm -f $($ENGINE ps -aq --filter "name=$CONTAINER_NAME" --filter "status=running") 2>/dev/null || true
+# =============================================================================
+# Remove any stale container
+# =============================================================================
+${ENGINE} rm -f $(${ENGINE} ps -aq --filter "name=${CONTAINER_NAME}" 2>/dev/null) 2>/dev/null || true
 
 # =============================================================================
 # Launch
 # =============================================================================
-info "Starting Hermes for project: ${PROJECT_NAME}"
-info "Container: ${CONTAINER_NAME}"
-info "Data: ${DATA_DIR}"
-info "Workspace: ${PROJECT_DIR}"
-info "Provider: ${PROVIDER}"
-info "Model: ${MODEL}"
+info "Starting Hermes"
+info "  Project   : ${PROJECT_NAME}"
+info "  Container : ${CONTAINER_NAME}"
+info "  Workspace : ${PROJECT_DIR}"
+info "  Data dir  : ${DATA_DIR}"
+info "  Provider  : ${PROVIDER:-"(from .env)"}"
+info "  Model     : ${MODEL:-"(from .env)"}"
 
-# Export PROVIDER and MODEL so docker-compose picks them up
-export PROVIDER MODEL
-
-exec $ENGINE compose run --rm hermes
+exec ${ENGINE} compose run --rm hermes
