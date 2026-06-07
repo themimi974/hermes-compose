@@ -26,6 +26,9 @@ services:
       MODEL: ${MODEL:-}
       HERMES_MODEL: ${HERMES_MODEL:-}
       HERMES_INFERENCE_MODEL: ${HERMES_INFERENCE_MODEL:-}
+      HERMES_UID: ${HERMES_UID:-0}
+      HERMES_GID: ${HERMES_GID:-0}
+
 
       # -------------------------------------------------------------------------
       # OpenAI / custom OpenAI-compatible endpoint
