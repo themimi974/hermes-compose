@@ -3,11 +3,10 @@
 # Hermes Agent — Docker Compose
 # =============================================================================
 # Usage:
-#   PROVIDER=ollama MODEL=llama3.1 init-hermes
-#   PROVIDER=openai OPENAI_API_KEY=sk-... init-hermes
-#   PROVIDER=nvidia NVIDIA_API_KEY=nvapi-... init-hermes
+#   PROVIDER=openai OPENAI_BASE_URL=http://192.168.1.223:8080/v1 OPENAI_API_KEY=none init-hermes
+#   PROVIDER=anthropic ANTHROPIC_API_KEY=sk-... init-hermes
+#   PROVIDER=ollama OLLAMA_BASE_URL=http://host.docker.internal:11434 init-hermes
 # =============================================================================
-
 services:
   hermes:
     build:
@@ -16,68 +15,199 @@ services:
     container_name: hermes
     stdin_open: true
     tty: true
-
     working_dir: /workspace
-
-    # -------------------------------------------------------------------------
-    # Environment — pass provider + all API keys
-    # -------------------------------------------------------------------------
     environment:
+
+      # -------------------------------------------------------------------------
+      # Hermes core
+      # -------------------------------------------------------------------------
       HERMES_HOME: /opt/data
-      working_dir: /workspace
-
-      # Provider selection
-      PROVIDER: ${PROVIDER:-nvidia}
+      PROVIDER: ${PROVIDER:-openai}
       MODEL: ${MODEL:-}
-      HERMES_UID: ${MODEL:-0}
-      HERMES_GID: ${MODEL:-0}
+      HERMES_MODEL: ${HERMES_MODEL:-}
+      HERMES_INFERENCE_MODEL: ${HERMES_INFERENCE_MODEL:-}
 
+      # -------------------------------------------------------------------------
+      # OpenAI / custom OpenAI-compatible endpoint
+      # Use OPENAI_BASE_URL to point at any local or remote OpenAI-compatible API
+      # Example: OPENAI_BASE_URL=http://192.168.1.223:8080/v1
+      # -------------------------------------------------------------------------
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # Anthropic
+      # -------------------------------------------------------------------------
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # NVIDIA NIM
+      # -------------------------------------------------------------------------
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # OpenRouter
+      # -------------------------------------------------------------------------
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # Google / Gemini
+      # -------------------------------------------------------------------------
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # Ollama (local)
+      # -------------------------------------------------------------------------
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+
+      # -------------------------------------------------------------------------
+      # LM Studio (local)
+      # -------------------------------------------------------------------------
+      LM_API_KEY: ${LM_API_KEY:-}
+      LM_BASE_URL: ${LM_BASE_URL:-http://host.docker.internal:1234/v1}
+
+      # -------------------------------------------------------------------------
+      # DeepSeek
+      # -------------------------------------------------------------------------
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # Mistral
+      # -------------------------------------------------------------------------
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+
+      # -------------------------------------------------------------------------
+      # xAI / Grok
+      # -------------------------------------------------------------------------
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      XAI_BASE_URL: ${XAI_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # HuggingFace
+      # -------------------------------------------------------------------------
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_BASE_URL: ${HF_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # Groq (STT / inference)
+      # -------------------------------------------------------------------------
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # GitHub Copilot
+      # -------------------------------------------------------------------------
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+
+      # -------------------------------------------------------------------------
+      # AWS Bedrock
+      # -------------------------------------------------------------------------
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      BEDROCK_BASE_URL: ${BEDROCK_BASE_URL:-}
+
+      # -------------------------------------------------------------------------
+      # Tool APIs — web search, scraping, browser
+      # -------------------------------------------------------------------------
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      TAVILY_BASE_URL: ${TAVILY_BASE_URL:-}
+      EXA_API_KEY: ${EXA_API_KEY:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      FIRECRAWL_API_URL: ${FIRECRAWL_API_URL:-}
+      PARALLEL_API_KEY: ${PARALLEL_API_KEY:-}
+      SEARXNG_URL: ${SEARXNG_URL:-}
+      BROWSERBASE_API_KEY: ${BROWSERBASE_API_KEY:-}
+      BROWSERBASE_PROJECT_ID: ${BROWSERBASE_PROJECT_ID:-}
+      BROWSER_USE_API_KEY: ${BROWSER_USE_API_KEY:-}
+      FAL_KEY: ${FAL_KEY:-}
+
+      # -------------------------------------------------------------------------
+      # TTS / STT
+      # -------------------------------------------------------------------------
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      VOICE_TOOLS_OPENAI_KEY: ${VOICE_TOOLS_OPENAI_KEY:-}
+
+      # -------------------------------------------------------------------------
       # Dashboard
+      # -------------------------------------------------------------------------
       HERMES_DASHBOARD: ${HERMES_DASHBOARD:-0}
       HERMES_DASHBOARD_INSECURE: ${HERMES_DASHBOARD_INSECURE:-0}
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:-}
 
-      # API server (OpenAI-compatible)
+      # -------------------------------------------------------------------------
+      # Built-in OpenAI-compatible API server
+      # -------------------------------------------------------------------------
       API_SERVER_ENABLED: ${API_SERVER_ENABLED:-false}
       API_SERVER_HOST: ${API_SERVER_HOST:-0.0.0.0}
+      API_SERVER_PORT: ${API_SERVER_PORT:-8642}
       API_SERVER_KEY: ${API_SERVER_KEY:-}
-      API_SERVER_CORS_ORIGINS: ${API_SERVER_CORS_ORIGINS:-*}
+      API_SERVER_CORS_ORIGINS: ${API_SERVER_CORS_ORIGINS:-}
 
-      # Provider API keys (all forwarded into the container)
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
-      HF_TOKEN: ${HF_TOKEN}
-      CUSTOM_BASE_URL: ${CUSTOM_BASE_URL}
-      CUSTOM_API_KEY: ${CUSTOM_API_KEY}
+      # -------------------------------------------------------------------------
+      # Terminal backend
+      # -------------------------------------------------------------------------
+      TERMINAL_ENV: ${TERMINAL_ENV:-local}
+      TERMINAL_TIMEOUT: ${TERMINAL_TIMEOUT:-}
+      SUDO_PASSWORD: ${SUDO_PASSWORD:-}
 
-      # Ollama host
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # -------------------------------------------------------------------------
+      # Messaging — Telegram
+      # -------------------------------------------------------------------------
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
+      TELEGRAM_HOME_CHANNEL: ${TELEGRAM_HOME_CHANNEL:-}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+
+      # -------------------------------------------------------------------------
+      # Messaging — Discord
+      # -------------------------------------------------------------------------
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_ALLOWED_USERS: ${DISCORD_ALLOWED_USERS:-}
+      DISCORD_HOME_CHANNEL: ${DISCORD_HOME_CHANNEL:-}
+
+      # -------------------------------------------------------------------------
+      # Messaging — Slack
+      # -------------------------------------------------------------------------
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_ALLOWED_USERS: ${SLACK_ALLOWED_USERS:-}
+      SLACK_HOME_CHANNEL: ${SLACK_HOME_CHANNEL:-}
+
+      # -------------------------------------------------------------------------
+      # Agent behaviour
+      # -------------------------------------------------------------------------
+      HERMES_MAX_ITERATIONS: ${HERMES_MAX_ITERATIONS:-90}
+      HERMES_YOLO_MODE: ${HERMES_YOLO_MODE:-}
+      HERMES_QUIET: ${HERMES_QUIET:-}
+      HERMES_API_TIMEOUT: ${HERMES_API_TIMEOUT:-1800}
+      HERMES_AGENT_TIMEOUT: ${HERMES_AGENT_TIMEOUT:-900}
+      HERMES_ALLOW_PRIVATE_URLS: ${HERMES_ALLOW_PRIVATE_URLS:-true}
+      GATEWAY_ALLOW_ALL_USERS: ${GATEWAY_ALLOW_ALL_USERS:-false}
 
     # -------------------------------------------------------------------------
     # Persistent volumes
     #   ../.hermes  → /opt/data    hermes state: config, sessions, memories
-    #   ../         → /workspace   parent project directory
+    #   ../         → /workspace   your project directory
     # -------------------------------------------------------------------------
     volumes:
       - ../.hermes:/opt/data:rw,z
       - ../:/workspace:z
 
-    # -------------------------------------------------------------------------
-    # Network
-    # -------------------------------------------------------------------------
     network_mode: host
     restart: "no"
-
-    # -------------------------------------------------------------------------
-    # Shared memory — some model inference backends benefit from larger /dev/shm
-    # -------------------------------------------------------------------------
     shm_size: "256m"
-
-    # -------------------------------------------------------------------------
-    # Logging
-    # -------------------------------------------------------------------------
     logging:
       driver: json-file
       options:
