@@ -65,6 +65,13 @@ ENV_DEST="${DATA_DIR}/.env"
 
 mkdir -p "${DATA_DIR}"
 
+# Fix ownership if the directory was created by Docker (different UID/GID)
+if [[ ! -w "${DATA_DIR}" ]]; then
+    warn "Cannot write to ${DATA_DIR} — fixing ownership with sudo..."
+    sudo chown -R "$(id -u):$(id -g)" "${DATA_DIR}" \
+        || err "Could not fix permissions on ${DATA_DIR}. Run: sudo chown -R $(id -u):$(id -g) ${DATA_DIR}"
+fi
+
 if [[ -f "${ENV_SRC}" ]]; then
     # .env found in current directory — use it
     info "Found .env in current directory — copying to ${ENV_DEST}"
